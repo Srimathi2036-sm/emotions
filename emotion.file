@@ -1,0 +1,217 @@
+import gradio as gr
+import pandas as pd
+import matplotlib.pyplot as plt
+from transformers import pipeline
+import datetime
+
+# ================= MODEL =================
+emotion_model = pipeline(
+    "text-classification",
+    model="j-hartmann/emotion-english-distilroberta-base",
+    top_k=None
+)
+
+emoji_map = {
+    "joy": "😊",
+    "sadness": "😢",
+    "anger": "😡",
+    "fear": "😨",
+    "surprise": "😲",
+    "disgust": "🤢",
+    "neutral": "😐",
+    "love": "❤️"
+}
+
+users = {}
+current_user = {"name": None}
+history = []
+
+# ================= LOGIN =================
+def signup(u, p):
+    if u in users:
+        return "❌ User already exists"
+    users[u] = p
+    return "Signup success ✅"
+
+def login(u, p):
+    if u in users and users[u] == p:
+        current_user["name"] = u
+        return (
+            "Login success ✅",
+            gr.update(visible=False),   # hide login
+            gr.update(visible=True)     # show dashboard
+        )
+    return "Invalid login ❌", gr.update(), gr.update()
+
+def logout():
+    current_user["name"] = None
+    return "Logged out ✅", gr.update(visible=True), gr.update(visible=False)
+
+# ================= EMOTION =================
+def detect(text):
+    if text.strip() == "":
+        return "Enter text", "", None, None
+
+    result = emotion_model(text)[0]
+
+    labels = [r["label"] for r in result]
+    scores = [r["score"] * 100 for r in result]
+
+    top = scores.index(max(scores))
+    emotion = labels[top]
+    confidence = scores[top]
+
+    emoji = emoji_map.get(emotion.lower(), "🙂")
+
+    history.append({
+        "user": current_user["name"],
+        "text": text,
+        "emotion": emotion,
+        "confidence": confidence,
+        "time": str(datetime.datetime.now())
+    })
+
+    df = pd.DataFrame(history)
+
+    plt.figure()
+    plt.bar(labels, scores)
+    plt.title("Emotion Breakdown")
+    chart = "chart.png"
+    plt.savefig(chart)
+    plt.close()
+
+    return f"{emotion} {emoji}", f"{confidence:.2f}%", df, chart
+
+def export_excel():
+    df = pd.DataFrame(history)
+    file = "emotion_data.xlsx"
+    df.to_excel(file, index=False)
+    return file
+
+# ================= 🌟 MODERN UI FIX =================
+with gr.Blocks(css="""
+
+/* BACKGROUND */
+body {
+    background: #f4f9ff;
+    font-family: Arial;
+}
+
+/* TITLE */
+h1 {
+    text-align: center;
+    color: #1f3c88;
+}
+
+/* LOGIN CARD */
+.login-card {
+    max-width: 420px;
+    margin: auto;
+    padding: 25px;
+    background: white;
+    border-radius: 18px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.12);
+}
+
+/* DASHBOARD */
+.dashboard-card {
+    max-width: 900px;
+    margin: auto;
+    padding: 20px;
+    background: white;
+    border-radius: 18px;
+    box-shadow: 0 12px 35px rgba(0,0,0,0.12);
+}
+
+/* TEXTBOX FIX (THIN + CLEAN) */
+.gr-textbox textarea {
+    border-radius: 10px !important;
+    border: 2px solid #4da3ff !important;
+    padding: 8px !important;
+    font-size: 14px !important;
+}
+
+/* BUTTONS */
+.gr-button {
+    background: #4da3ff !important;
+    color: white !important;
+    border-radius: 10px !important;
+    font-weight: bold;
+}
+
+.gr-button:hover {
+    background: #1f7ae0 !important;
+}
+
+/* CHART BOX */
+img {
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+}
+
+""") as app:
+
+    gr.Markdown("# 🧠 Emotion AI Detector")
+
+    # ================= LOGIN PAGE =================
+    with gr.Column(visible=True) as login_page:
+
+        gr.Markdown("## 🔐 Login Page")
+
+        u = gr.Textbox(label="Username")
+        p = gr.Textbox(label="Password", type="password")
+
+        with gr.Row():
+            signup_btn = gr.Button("Signup")
+            login_btn = gr.Button("Login")
+
+        msg = gr.Textbox()
+
+    # ================= DASHBOARD =================
+    with gr.Column(visible=False) as dashboard:
+
+        gr.Markdown("## 🏠 Dashboard")
+
+        logout_btn = gr.Button("🚪 Logout")
+
+        text = gr.Textbox(
+            label="Enter sentence",
+            placeholder="Type something like: I am very happy today 😊"
+        )
+
+        btn = gr.Button("✨ Detect Emotion")
+
+        emotion = gr.Textbox(label="Emotion")
+        confidence = gr.Textbox(label="Confidence %")
+
+        chart = gr.Image(label="Chart")
+        table = gr.Dataframe(label="History")
+
+        with gr.Row():
+            export = gr.Button("⬇️ Download Excel")
+            file = gr.File()
+
+    # ================= EVENTS =================
+    signup_btn.click(signup, [u, p], msg)
+
+    login_btn.click(
+        login,
+        [u, p],
+        [msg, login_page, dashboard]
+    )
+
+    logout_btn.click(
+        logout,
+        [],
+        [msg, login_page, dashboard]
+    )
+
+    btn.click(
+        detect,
+        [text],
+        [emotion, confidence, table, chart]
+    )
+
+    export.click(export_excel, [], file)
+
+app.launch()
